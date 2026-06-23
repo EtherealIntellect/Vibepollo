@@ -1,0 +1,72 @@
+name: Haswell QSV Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup MSYS2 (UCRT64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ucrt64
+          update: true
+          install: >-
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-boost
+            mingw-w64-ucrt-x86_64-cppwinrt
+            mingw-w64-ucrt-x86_64-curl-winssl
+            mingw-w64-ucrt-x86_64-miniupnpc
+            mingw-w64-ucrt-x86_64-nlohmann-json
+            mingw-w64-ucrt-x86_64-onevpl
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-MinHook
+            mingw-w64-ucrt-x86_64-nodejs
+            mingw-w64-ucrt-x86_64-nsis
+
+      - name: Fetch patched FFmpeg
+        run: |
+          curl -L --retry 5 -o ffmpeg.tar.gz \
+            https://github.com/EtherealIntellect/build-deps/releases/download/haswell-qsv-ffmpeg/Windows-AMD64-ffmpeg.tar.gz
+          mkdir -p ffmpeg-prepared
+          tar -xzf ffmpeg.tar.gz -C ffmpeg-prepared
+          echo "Patched libs:"; ls ffmpeg-prepared/ffmpeg/lib
+          echo "Patch string present?"; strings ffmpeg-prepared/ffmpeg/lib/libavutil.a | grep -i "legacy MFXInit fallback" | head -1 || true
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFFMPEG_PREPARED_BINARIES="$(pwd)/ffmpeg-prepared/ffmpeg" \
+            -DSUNSHINE_ENABLE_WEBRTC=OFF \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_DOCS=OFF \
+            -DSUNSHINE_ASSETS_DIR=assets
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Upload binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sunshine-haswell-qsv
+          path: |
+            build/sunshine.exe
+            build/tools/*.exe
+            build/assets/**
+          if-no-files-found: warn
